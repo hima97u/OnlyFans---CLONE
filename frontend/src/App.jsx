@@ -3,6 +3,43 @@ import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api'
 
+async function authenticatedFetch(path, options = {}, onSessionExpired) {
+  const headers = new Headers(options.headers || {})
+  const accessToken = localStorage.getItem('access_token')
+  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+
+  let response = await fetch(`${API_URL}${path}`, { ...options, headers })
+  if (response.status !== 401) return response
+
+  const refreshToken = localStorage.getItem('refresh_token')
+  if (!refreshToken) {
+    onSessionExpired()
+    throw new Error('Your session has expired. Please log in again.')
+  }
+
+  const refreshResponse = await fetch(`${API_URL}/auth/token/refresh/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh: refreshToken }),
+  })
+  if (!refreshResponse.ok) {
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('refresh_token')
+    onSessionExpired()
+    throw new Error('Your session has expired. Please log in again.')
+  }
+
+  const refreshed = await refreshResponse.json()
+  localStorage.setItem('access_token', refreshed.access)
+  headers.set('Authorization', `Bearer ${refreshed.access}`)
+  response = await fetch(`${API_URL}${path}`, { ...options, headers })
+  if (response.status === 401) {
+    onSessionExpired()
+    throw new Error('Your session has expired. Please log in again.')
+  }
+  return response
+}
+
 function formatUser(user) {
   const username = user.username || user.email?.split('@')[0] || 'User'
   return {
@@ -36,7 +73,7 @@ function ProfileDrawer({ user, darkMode, language, onProfile, onDarkMode, onLang
           <div className="profile-badge profile-badge--large">{user.initials}</div>
           <strong>{user.username}</strong>
           <span>{user.tag}</span>
-          <small>0 Fans · 0 Following</small>
+          <small>{user.followers_count || 0} Fans · {user.following_count || 0} Following</small>
         </div>
         <div className="drawer-section">
           <button type="button" onClick={onProfile}>◎ <span>{text.profile}</span></button>
@@ -61,23 +98,151 @@ function ProfileDrawer({ user, darkMode, language, onProfile, onDarkMode, onLang
   )
 }
 
-function ProfileModal({ user, onClose }) {
+function SettingsPage({ user, onBack, onSave, onPasswordChange, onDelete }) {
+  const [section, setSection] = useState('profile')
+  const [form, setForm] = useState({
+    username: user.username,
+    display_name: user.display_name || '',
+    bio: user.bio || '',
+  })
+  const [avatar, setAvatar] = useState(null)
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [passwords, setPasswords] = useState({ current_password: '', new_password: '' })
+  const [deletePassword, setDeletePassword] = useState('')
+  const [message, setMessage] = useState('')
+
+  async function handleSave(event) {
+    event.preventDefault()
+    setIsSaving(true)
+    setError('')
+    try {
+      await onSave(form, avatar)
+      setMessage('Profile updated successfully.')
+    } catch (saveError) {
+      setError(saveError.message)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <section className="profile-modal" onClick={(event) => event.stopPropagation()}>
-        <button type="button" onClick={onClose}>×</button>
-        <div className="profile-badge profile-badge--large">{user.initials}</div>
-        <h2>{user.username}</h2>
-        <p>{user.tag}</p>
-        <div><strong>0</strong><span>Fans</span><strong>0</strong><span>Following</span></div>
-      </section>
-    </div>
+    <section className="settings-page">
+      <aside className="settings-sidebar">
+        <button className="settings-back" type="button" onClick={onBack}>← SETTINGS</button>
+        <strong>{user.tag}</strong>
+        <button className={section === 'profile' ? 'settings-nav settings-nav--active' : 'settings-nav'} type="button" onClick={() => setSection('profile')}>Profile &gt;</button>
+        <button className={section === 'account' ? 'settings-nav settings-nav--active' : 'settings-nav'} type="button" onClick={() => setSection('account')}>Account &gt;</button>
+      </aside>
+      <div className="settings-content">
+        <header className="settings-header">
+          <strong>{section === 'profile' ? 'EDIT PROFILE' : 'ACCOUNT'}</strong>
+          {section === 'profile' && <button type="submit" form="profile-form" disabled={isSaving}>{isSaving ? 'SAVING...' : 'SAVE'}</button>}
+        </header>
+        {section === 'profile'
+          ? <form id="profile-form" className="settings-form" onSubmit={handleSave}>
+            <div className="settings-cover"><div className="profile-cover-shape" /></div>
+            <div className="settings-avatar">
+              {user.avatar_url ? <img src={user.avatar_url} alt="" /> : <span>{user.initials}</span>}
+              <label htmlFor="settings-avatar">📷</label>
+              <input id="settings-avatar" type="file" accept="image/*" onChange={(event) => setAvatar(event.target.files[0])} />
+            </div>
+            <label htmlFor="settings-username">Username</label>
+            <input id="settings-username" value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} maxLength="150" required />
+            <label htmlFor="settings-display-name">Display name</label>
+            <input id="settings-display-name" value={form.display_name} onChange={(event) => setForm({ ...form, display_name: event.target.value })} maxLength="100" />
+            <label htmlFor="settings-bio">Bio</label>
+            <textarea id="settings-bio" value={form.bio} onChange={(event) => setForm({ ...form, bio: event.target.value })} maxLength="500" />
+          </form>
+          : <div className="settings-account">
+            <h3>Account info</h3>
+            <div className="account-row"><span>Email</span><strong>{user.email}</strong></div>
+            <h3>Security</h3>
+            <form onSubmit={async (event) => {
+              event.preventDefault()
+              setError('')
+              setMessage('')
+              try {
+                await onPasswordChange(passwords)
+                setPasswords({ current_password: '', new_password: '' })
+                setMessage('Password updated successfully.')
+              } catch (passwordError) {
+                setError(passwordError.message)
+              }
+            }}>
+              <label htmlFor="current-password">Current password</label>
+              <input id="current-password" type="password" value={passwords.current_password} onChange={(event) => setPasswords({ ...passwords, current_password: event.target.value })} required />
+              <label htmlFor="new-password">New password</label>
+              <input id="new-password" type="password" value={passwords.new_password} onChange={(event) => setPasswords({ ...passwords, new_password: event.target.value })} minLength="8" required />
+              <button className="settings-action-button" type="submit">CHANGE PASSWORD</button>
+            </form>
+            <div className="delete-account">
+              <h3>Delete account</h3>
+              <p>This permanently deletes your account and profile.</p>
+              <form onSubmit={async (event) => {
+                event.preventDefault()
+                setError('')
+                try {
+                  await onDelete(deletePassword)
+                } catch (deleteError) {
+                  setError(deleteError.message)
+                }
+              }}>
+                <label htmlFor="delete-password">Confirm password</label>
+                <input id="delete-password" type="password" value={deletePassword} onChange={(event) => setDeletePassword(event.target.value)} required />
+                <button className="delete-account-button" type="submit">DELETE ACCOUNT</button>
+              </form>
+            </div>
+          </div>}
+        {error && <p className="form-error settings-message">{error}</p>}
+        {message && <p className="success-message settings-message">{message}</p>}
+      </div>
+    </section>
   )
 }
 
-function HomePage({ user, onLogout }) {
+function ProfilePage({ user, onEdit, onBack }) {
+  return (
+    <section className="profile-page">
+      <header className="profile-page-header">
+        <button type="button" onClick={onBack} aria-label="Back">←</button>
+        <strong>{user.display_name || user.username}</strong>
+        <span>⋮</span>
+      </header>
+      <div className="profile-cover">
+        <div className="profile-cover-shape" />
+      </div>
+      <div className="profile-summary">
+        <div className="profile-avatar-wrap">
+          {user.avatar_url
+            ? <img className="profile-page-avatar" src={user.avatar_url} alt="" />
+            : <div className="profile-page-avatar profile-page-avatar--initials">{user.initials}</div>}
+          <i />
+        </div>
+        <div className="profile-actions">
+          <button type="button" onClick={onEdit}>⚙ EDIT PROFILE</button>
+          <button type="button" aria-label="Share profile">⇧</button>
+        </div>
+        <h1>{user.display_name || user.username}</h1>
+        <p>{user.tag} <span>·</span> <b>Available⌄</b></p>
+        {user.bio && <div className="profile-bio">{user.bio}</div>}
+      </div>
+      <div className="profile-tabs">
+        <button className="profile-tab profile-tab--active" type="button">NO POSTS</button>
+        <button className="profile-tab" type="button">NO MEDIA</button>
+      </div>
+      <div className="profile-empty-state">
+        <div className="empty-art">▱ ◇ ▱</div>
+        <strong>No posts yet</strong>
+      </div>
+    </section>
+  )
+}
+
+function HomePage({ user, onLogout, onUserUpdate, onPasswordChange, onDelete }) {
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [profileOpen, setProfileOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [profilePage, setProfilePage] = useState(false)
   const [darkMode, setDarkMode] = useState(localStorage.getItem('dark_mode') === 'true')
   const [language, setLanguage] = useState(localStorage.getItem('language') || 'English')
   const text = translations[language]
@@ -93,13 +258,27 @@ function HomePage({ user, onLogout }) {
     ['•••', text.more],
   ]
 
+  if (settingsOpen) {
+    return <SettingsPage
+      user={user}
+      onBack={() => setSettingsOpen(false)}
+      onSave={onUserUpdate}
+      onPasswordChange={onPasswordChange}
+      onDelete={onDelete}
+    />
+  }
+
   return (
     <div className={darkMode ? 'home-page home-page--dark' : 'home-page'}>
       <aside className="home-sidebar">
         <button className="profile-badge profile-badge--button" type="button" onClick={() => setDrawerOpen(true)}>{user.initials}</button>
         <nav>
           {menuItems.map(([icon, label, active]) => (
-            <div className={active ? 'menu-item menu-item--active' : 'menu-item'} key={label}>
+            <div
+              className={active || (label === text.profile && profilePage) ? 'menu-item menu-item--active' : 'menu-item'}
+              key={label}
+              onClick={() => label === text.profile && setProfilePage(true)}
+            >
               <span>{icon}</span>
               {label}
             </div>
@@ -108,7 +287,13 @@ function HomePage({ user, onLogout }) {
         <button className="new-post-button" type="button"><b>＋</b> {text.newPost}</button>
       </aside>
 
-      <section className="home-feed">
+      {profilePage
+        ? <ProfilePage
+          user={user}
+          onEdit={() => setSettingsOpen(true)}
+          onBack={() => setProfilePage(false)}
+        />
+        : <section className="home-feed">
         <header className="feed-header">
           <strong>HOME</strong>
           <span>⋮</span>
@@ -135,7 +320,7 @@ function HomePage({ user, onLogout }) {
             <span className="placeholder-label">Featured post preview</span>
           </div>
         </article>
-      </section>
+        </section>}
 
       <aside className="home-discover">
         <div className="search-box">Search posts <span>⌕</span></div>
@@ -155,7 +340,7 @@ function HomePage({ user, onLogout }) {
         onClose={() => setDrawerOpen(false)}
         onProfile={() => {
           setDrawerOpen(false)
-          setProfileOpen(true)
+          setProfilePage(true)
         }}
         onDarkMode={() => {
           const next = !darkMode
@@ -169,7 +354,6 @@ function HomePage({ user, onLogout }) {
         }}
         onLogout={onLogout}
       />}
-      {profileOpen && <ProfileModal user={user} onClose={() => setProfileOpen(false)} />}
     </div>
   )
 }
@@ -219,6 +403,55 @@ function App() {
     setShowTerms(false)
   }
 
+  async function updateUser(profileForm, avatar) {
+    const formData = new FormData()
+    Object.entries(profileForm).forEach(([key, value]) => formData.append(key, value))
+    if (avatar) formData.append('avatar', avatar)
+    const response = await authenticatedFetch('/auth/profile/', {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+      body: formData,
+    }, logout)
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(Object.values(data).flat()[0] || 'Unable to save profile.')
+    }
+    const updatedUser = formatUser(data)
+    localStorage.setItem('user', JSON.stringify(updatedUser))
+    setUser(updatedUser)
+  }
+
+  async function changePassword(passwords) {
+    const response = await authenticatedFetch('/auth/password/', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('access_token')}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(passwords),
+    }, logout)
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(Object.values(data).flat()[0] || 'Unable to change password.')
+    }
+  }
+
+  async function deleteAccount(password) {
+    const response = await authenticatedFetch('/auth/delete/', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('access_token')}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ password }),
+    }, logout)
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(Object.values(data).flat()[0] || 'Unable to delete account.')
+    }
+    logout()
+  }
+
   async function handleSubmit(event) {
     event.preventDefault()
     setError('')
@@ -255,12 +488,12 @@ function App() {
     }
   }
 
-  if (showHome) return <HomePage user={user || currentUser} onLogout={logout} />
+  if (showHome) return <HomePage user={user || currentUser} onLogout={logout} onUserUpdate={updateUser} onPasswordChange={changePassword} onDelete={deleteAccount} />
 
   if (showTerms) {
     return (
       <>
-        <HomePage user={user || currentUser} onLogout={logout} />
+        <HomePage user={user || currentUser} onLogout={logout} onUserUpdate={updateUser} onPasswordChange={changePassword} onDelete={deleteAccount} />
         <TermsModal onAccept={() => {
           localStorage.setItem('terms_accepted', 'true')
           setShowTerms(false)
