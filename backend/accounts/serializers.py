@@ -93,13 +93,14 @@ class AccountRegistrationSerializer(CredentialsSerializer):
 class ProfileSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='user_id', read_only=True)
     username = serializers.CharField(source='user.username', max_length=150)
+    full_name = serializers.SerializerMethodField()
     email = serializers.EmailField(source='user.email', read_only=True)
     avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
         fields = (
-            'id', 'username', 'email', 'display_name', 'bio', 'avatar_url',
+            'id', 'username', 'full_name', 'email', 'display_name', 'bio', 'avatar_url',
             'created_at', 'updated_at',
             'followers_count', 'following_count', 'is_private',
         )
@@ -113,6 +114,9 @@ class ProfileSerializer(serializers.ModelSerializer):
             return None
         request = self.context.get('request')
         return request.build_absolute_uri(profile.avatar.url) if request else profile.avatar.url
+
+    def get_full_name(self, profile):
+        return profile.user.get_full_name().strip() or profile.display_name or profile.user.username
 
     def validate_display_name(self, value):
         return value.strip()

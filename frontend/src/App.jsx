@@ -42,12 +42,24 @@ async function authenticatedFetch(path, options = {}, onSessionExpired) {
 
 function formatUser(user) {
   const username = user.username || user.email?.split('@')[0] || 'User'
+  const fullName = user.full_name || user.display_name || user.name || username
   return {
     ...user,
     username,
+    full_name: fullName,
     tag: user.tag || `@${username}`,
-    initials: username.slice(0, 2).toUpperCase(),
+    initials: getInitials(fullName, username),
   }
+}
+
+function getInitials(fullName, username = '') {
+  return fullName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((namePart) => namePart[0])
+    .join('')
+    .toUpperCase() || username.slice(0, 2).toUpperCase()
 }
 
 function BrandMark({ small = false }) {
@@ -71,7 +83,7 @@ function ProfileDrawer({ user, darkMode, language, onProfile, onDarkMode, onLang
         <button className="drawer-close" type="button" onClick={onClose}>×</button>
         <div className="drawer-profile">
           <div className="profile-badge profile-badge--large">{user.initials}</div>
-          <strong>{user.username}</strong>
+          <strong>{user.full_name}</strong>
           <span>{user.tag}</span>
           <small>{user.followers_count || 0} Fans · {user.following_count || 0} Following</small>
         </div>
@@ -306,10 +318,10 @@ function PeopleSearch({ onToggleFollow, onLogout }) {
           <div className="people-result-avatar">
             {person.avatar_url
               ? <img src={person.avatar_url} alt="" />
-              : person.username.slice(0, 2).toUpperCase()}
+              : getInitials(person.full_name || person.display_name || person.username, person.username)}
           </div>
           <div className="people-result-copy">
-            <strong>{person.display_name || person.username}</strong>
+            <strong>{person.full_name || person.display_name || person.username}</strong>
             <span>@{person.username} · {person.followers_count} followers</span>
           </div>
           <FollowButton
@@ -398,7 +410,7 @@ function ProfilePage({ user, onEdit, onBack, onToggleFollow, onLogout }) {
     <section className="profile-page">
       <header className="profile-page-header">
         <button type="button" onClick={onBack} aria-label="Back">←</button>
-        <strong>{user.display_name || user.username}</strong>
+        <strong>{user.full_name}</strong>
         <span>⋮</span>
       </header>
       <div className="profile-cover">
@@ -415,8 +427,8 @@ function ProfilePage({ user, onEdit, onBack, onToggleFollow, onLogout }) {
           <button className="edit-profile-button" type="button" onClick={onEdit}><span aria-hidden="true">✦</span> EDIT PROFILE</button>
           <button className="icon-button" type="button" aria-label="Share profile">↗</button>
         </div>
-        <h1>{user.display_name || user.username}</h1>
-        <p>{user.tag} <span>·</span> <b>Available⌄</b></p>
+        <h1>{user.full_name}</h1>
+        <p>{user.tag}</p>
         {user.bio && <div className="profile-bio">{user.bio}</div>}
         <div className="profile-stats">
           <span><strong>{user.followers_count || 0}</strong> Followers</span>
@@ -521,6 +533,10 @@ function HomePage({ user, onLogout, onUserUpdate, onRefreshUser, onPasswordChang
   const [darkMode, setDarkMode] = useState(localStorage.getItem('dark_mode') === 'true')
   const [language, setLanguage] = useState(localStorage.getItem('language') || 'English')
   const text = translations[language]
+
+  useEffect(() => {
+    onRefreshUser()
+  }, [onRefreshUser])
 
   async function loadNotifications() {
     setNotificationLoading(true)

@@ -162,7 +162,10 @@ class PeopleSearchView(APIView):
         profiles = Profile.objects.filter(
             user__is_active=True,
         ).filter(
-            Q(user__username__icontains=query) | Q(display_name__icontains=query),
+            Q(user__username__icontains=query)
+            | Q(user__first_name__icontains=query)
+            | Q(user__last_name__icontains=query)
+            | Q(display_name__icontains=query),
         ).exclude(user=request.user).select_related('user')[:20]
         return Response(FollowUserSerializer(
             profiles,

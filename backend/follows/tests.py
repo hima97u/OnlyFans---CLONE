@@ -92,6 +92,10 @@ class FollowApiTests(APITestCase):
         self.assertFalse(response.data[0]['is_following'])
         self.assertFalse(response.data[0]['is_self'])
 
+        response = self.client.get('/api/follows/search/?q=Bob')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data[0]['full_name'], 'bob')
+
         self.client.post(f'/api/follows/{self.bob.pk}/')
         response = self.client.get('/api/follows/search/?q=bob')
         self.assertTrue(response.data[0]['is_following'])

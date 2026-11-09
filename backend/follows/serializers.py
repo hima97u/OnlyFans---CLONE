@@ -8,6 +8,7 @@ from .models import Follow
 class FollowUserSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(source='user_id', read_only=True)
     username = serializers.CharField(source='user.username', read_only=True)
+    full_name = serializers.SerializerMethodField()
     display_name = serializers.CharField(read_only=True)
     avatar_url = serializers.SerializerMethodField()
     is_following = serializers.SerializerMethodField()
@@ -16,7 +17,7 @@ class FollowUserSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
         fields = (
-            'id', 'username', 'display_name', 'avatar_url',
+            'id', 'username', 'full_name', 'display_name', 'avatar_url',
             'followers_count', 'following_count', 'is_private',
             'is_following', 'is_self',
         )
@@ -27,6 +28,9 @@ class FollowUserSerializer(serializers.ModelSerializer):
             return None
         request = self.context.get('request')
         return request.build_absolute_uri(profile.avatar.url) if request else profile.avatar.url
+
+    def get_full_name(self, profile):
+        return profile.user.get_full_name().strip() or profile.display_name or profile.user.username
 
     def get_is_following(self, profile):
         request = self.context.get('request')
