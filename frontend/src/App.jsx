@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api'
@@ -208,7 +208,192 @@ function SettingsPage({ user, darkMode, onBack, onSave, onPasswordChange, onDele
   )
 }
 
-function ProfilePage({ user, onEdit, onBack }) {
+function FollowButton({ following, busy, onClick }) {
+  return (
+    <button
+      className={following ? 'follow-button follow-button--following' : 'follow-button'}
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+    >
+      {busy ? '...' : following ? 'Following' : 'Follow'}
+    </button>
+  )
+}
+
+function PeopleSearch({ onToggleFollow, onLogout }) {
+  const [query, setQuery] = useState('')
+  const [people, setPeople] = useState([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [busyUserId, setBusyUserId] = useState(null)
+
+  useEffect(() => {
+    const trimmedQuery = query.trim()
+    if (!trimmedQuery) return undefined
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setIsLoading(true)
+      setError('')
+      try {
+        const response = await authenticatedFetch(
+          `/follows/search/?q=${encodeURIComponent(trimmedQuery)}`,
+          {},
+          onLogout,
+        )
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.detail || 'Unable to search people.')
+        if (!cancelled) setPeople(data)
+      } catch (searchError) {
+        if (!cancelled) setError(searchError.message)
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [query, onLogout])
+
+  function handleSearchChange(event) {
+    const nextQuery = event.target.value
+    setQuery(nextQuery)
+    if (!nextQuery.trim()) {
+      setPeople([])
+      setError('')
+    }
+  }
+
+  async function togglePerson(person) {
+    setBusyUserId(person.id)
+    setError('')
+    try {
+      await onToggleFollow(person.id, person.is_following)
+      setPeople((current) => current.map((item) => item.id === person.id
+        ? {
+          ...item,
+          is_following: !item.is_following,
+          followers_count: item.followers_count + (item.is_following ? -1 : 1),
+        }
+        : item))
+    } catch (followError) {
+      setError(followError.message)
+    } finally {
+      setBusyUserId(null)
+    }
+  }
+
+  return (
+    <div className="people-search">
+      <label className="search-box">
+        <input
+          type="search"
+          value={query}
+          onChange={handleSearchChange}
+          placeholder="Search people"
+          aria-label="Search people"
+        />
+        <span aria-hidden="true">⌕</span>
+      </label>
+      {isLoading && <p className="search-hint">Finding creators...</p>}
+      {error && <p className="form-error search-hint" role="alert">{error}</p>}
+      {!isLoading && query.trim() && !people.length && !error && (
+        <p className="search-hint">No people found.</p>
+      )}
+      {people.map((person) => (
+        <div className="people-result" key={person.id}>
+          <div className="people-result-avatar">
+            {person.avatar_url
+              ? <img src={person.avatar_url} alt="" />
+              : person.username.slice(0, 2).toUpperCase()}
+          </div>
+          <div className="people-result-copy">
+            <strong>{person.display_name || person.username}</strong>
+            <span>@{person.username} · {person.followers_count} followers</span>
+          </div>
+          <FollowButton
+            following={person.is_following}
+            busy={busyUserId === person.id}
+            onClick={() => togglePerson(person)}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ProfilePage({ user, onEdit, onBack, onToggleFollow, onLogout }) {
+  const [followers, setFollowers] = useState([])
+  const [following, setFollowing] = useState([])
+  const [isLoadingConnections, setIsLoadingConnections] = useState(true)
+  const [connectionError, setConnectionError] = useState('')
+  const [busyUserId, setBusyUserId] = useState(null)
+
+  async function loadConnections() {
+    setIsLoadingConnections(true)
+    setConnectionError('')
+    try {
+      const [followersResponse, followingResponse] = await Promise.all([
+        authenticatedFetch(`/follows/followers/${user.id}/`, {}, onLogout),
+        authenticatedFetch(`/follows/following/${user.id}/`, {}, onLogout),
+      ])
+      if (!followersResponse.ok || !followingResponse.ok) {
+        throw new Error('Unable to load follow connections.')
+      }
+      setFollowers(await followersResponse.json())
+      setFollowing(await followingResponse.json())
+    } catch (error) {
+      setConnectionError(error.message)
+    } finally {
+      setIsLoadingConnections(false)
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadInitialConnections() {
+      try {
+        const [followersResponse, followingResponse] = await Promise.all([
+          authenticatedFetch(`/follows/followers/${user.id}/`, {}, onLogout),
+          authenticatedFetch(`/follows/following/${user.id}/`, {}, onLogout),
+        ])
+        if (!followersResponse.ok || !followingResponse.ok) {
+          throw new Error('Unable to load follow connections.')
+        }
+        const [nextFollowers, nextFollowing] = await Promise.all([
+          followersResponse.json(),
+          followingResponse.json(),
+        ])
+        if (!cancelled) {
+          setFollowers(nextFollowers)
+          setFollowing(nextFollowing)
+        }
+      } catch (error) {
+        if (!cancelled) setConnectionError(error.message)
+      } finally {
+        if (!cancelled) setIsLoadingConnections(false)
+      }
+    }
+    loadInitialConnections()
+    return () => {
+      cancelled = true
+    }
+  }, [user.id, onLogout])
+
+  async function toggleFollow(target) {
+    setBusyUserId(target.id)
+    setConnectionError('')
+    try {
+      await onToggleFollow(target.id, following.some((item) => item.id === target.id))
+      await loadConnections()
+    } catch (error) {
+      setConnectionError(error.message)
+    } finally {
+      setBusyUserId(null)
+    }
+  }
+
   return (
     <section className="profile-page">
       <header className="profile-page-header">
@@ -233,6 +418,10 @@ function ProfilePage({ user, onEdit, onBack }) {
         <h1>{user.display_name || user.username}</h1>
         <p>{user.tag} <span>·</span> <b>Available⌄</b></p>
         {user.bio && <div className="profile-bio">{user.bio}</div>}
+        <div className="profile-stats">
+          <span><strong>{user.followers_count || 0}</strong> Followers</span>
+          <span><strong>{user.following_count || 0}</strong> Following</span>
+        </div>
       </div>
       <div className="profile-tabs">
         <button className="profile-tab profile-tab--active" type="button">NO POSTS</button>
@@ -241,18 +430,172 @@ function ProfilePage({ user, onEdit, onBack }) {
       <div className="profile-empty-state">
         <div className="empty-art">▱ ◇ ▱</div>
         <strong>No posts yet</strong>
+        <div className="connection-panel">
+          <div className="connection-heading">
+            <strong>People in your circle</strong>
+            <span>{isLoadingConnections ? 'Loading...' : `${followers.length + following.length} connections`}</span>
+          </div>
+          {connectionError && <p className="form-error" role="alert">{connectionError}</p>}
+          {!isLoadingConnections && [...following, ...followers.filter((item) => !following.some((person) => person.id === item.id))].map((person) => (
+            <div className="connection-row" key={person.id}>
+              <div className="connection-avatar">{person.username.slice(0, 2).toUpperCase()}</div>
+              <div>
+                <strong>{person.display_name || person.username}</strong>
+                <span>@{person.username}</span>
+              </div>
+              <FollowButton
+                following={following.some((item) => item.id === person.id)}
+                busy={busyUserId === person.id}
+                onClick={() => toggleFollow(person)}
+              />
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   )
 }
 
-function HomePage({ user, onLogout, onUserUpdate, onPasswordChange, onDelete }) {
+function NotificationPanel({ notifications, unreadCount, isLoading, error, onMarkRead, onMarkAllRead, onClose }) {
+  function notificationText(notification) {
+    const actor = notification.actor_display_name || notification.actor_username || 'Someone'
+    return `${actor} started following you`
+  }
+
+  return (
+    <div className="notification-backdrop" onClick={onClose}>
+      <section
+        className="notification-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="notification-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="notification-panel-header">
+          <div>
+            <span className="notification-eyebrow">YOUR ACTIVITY</span>
+            <h2 id="notification-title">Notifications</h2>
+          </div>
+          <button type="button" className="notification-close" onClick={onClose} aria-label="Close notifications">×</button>
+        </header>
+        <div className="notification-toolbar">
+          <span>{unreadCount ? `${unreadCount} new` : 'All caught up'}</span>
+          {unreadCount > 0 && <button type="button" onClick={onMarkAllRead}>Mark all as read</button>}
+        </div>
+        {error && <p className="form-error notification-message" role="alert">{error}</p>}
+        <div className="notification-list">
+          {isLoading && <p className="notification-empty">Loading your notifications...</p>}
+          {!isLoading && !notifications.length && <p className="notification-empty">No notifications yet.</p>}
+          {!isLoading && notifications.map((notification) => (
+            <button
+              className={notification.is_read ? 'notification-item' : 'notification-item notification-item--unread'}
+              type="button"
+              key={notification.id}
+              onClick={() => onMarkRead(notification)}
+            >
+              <span className="notification-avatar">
+                {(notification.actor_username || '?').slice(0, 2).toUpperCase()}
+              </span>
+              <span className="notification-copy">
+                <strong>{notificationText(notification)}</strong>
+                <small>{new Date(notification.created_at).toLocaleString()}</small>
+              </span>
+              {!notification.is_read && <i aria-label="Unread notification" />}
+            </button>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function HomePage({ user, onLogout, onUserUpdate, onRefreshUser, onPasswordChange, onDelete }) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [profilePage, setProfilePage] = useState(false)
+  const [notificationOpen, setNotificationOpen] = useState(false)
+  const [notifications, setNotifications] = useState([])
+  const [unreadNotifications, setUnreadNotifications] = useState(0)
+  const [notificationLoading, setNotificationLoading] = useState(false)
+  const [notificationError, setNotificationError] = useState('')
   const [darkMode, setDarkMode] = useState(localStorage.getItem('dark_mode') === 'true')
   const [language, setLanguage] = useState(localStorage.getItem('language') || 'English')
   const text = translations[language]
+
+  async function loadNotifications() {
+    setNotificationLoading(true)
+    setNotificationError('')
+    try {
+      const response = await authenticatedFetch('/notifications/', {}, onLogout)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Unable to load notifications.')
+      setNotifications(data.results)
+      setUnreadNotifications(data.unread_count)
+    } catch (error) {
+      setNotificationError(error.message)
+    } finally {
+      setNotificationLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadNotificationCount() {
+      try {
+        const response = await authenticatedFetch('/notifications/', {}, onLogout)
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.detail || 'Unable to load notifications.')
+        if (!cancelled) setUnreadNotifications(data.unread_count)
+      } catch (error) {
+        if (!cancelled) setNotificationError(error.message)
+      }
+    }
+    loadNotificationCount()
+    return () => {
+      cancelled = true
+    }
+  }, [onLogout])
+
+  async function markNotificationRead(notification) {
+    if (notification.is_read) return
+    try {
+      const response = await authenticatedFetch(`/notifications/${notification.id}/read/`, {
+        method: 'POST',
+      }, onLogout)
+      if (!response.ok) throw new Error('Unable to update notification.')
+      setNotifications((current) => current.map((item) => item.id === notification.id
+        ? { ...item, is_read: true }
+        : item))
+      setUnreadNotifications((count) => Math.max(0, count - 1))
+    } catch (error) {
+      setNotificationError(error.message)
+    }
+  }
+
+  async function markAllNotificationsRead() {
+    try {
+      const response = await authenticatedFetch('/notifications/read-all/', {
+        method: 'POST',
+      }, onLogout)
+      if (!response.ok) throw new Error('Unable to update notifications.')
+      setNotifications((current) => current.map((item) => ({ ...item, is_read: true })))
+      setUnreadNotifications(0)
+    } catch (error) {
+      setNotificationError(error.message)
+    }
+  }
+
+  async function toggleFollow(userId, isFollowing) {
+    const response = await authenticatedFetch(`/follows/${userId}/`, {
+      method: isFollowing ? 'DELETE' : 'POST',
+    }, onLogout)
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.detail || 'Unable to update follow status.')
+    }
+    await onRefreshUser()
+    return data
+  }
   const menuItems = [
     ['⌂', text.home, true],
     ['◈', text.discover],
@@ -285,10 +628,19 @@ function HomePage({ user, onLogout, onUserUpdate, onPasswordChange, onDelete }) 
             <div
               className={active || (label === text.profile && profilePage) ? 'menu-item menu-item--active' : 'menu-item'}
               key={label}
-              onClick={() => label === text.profile && setProfilePage(true)}
+              onClick={() => {
+                if (label === text.profile) setProfilePage(true)
+                if (label === text.notifications) {
+                  setNotificationOpen(true)
+                  loadNotifications()
+                }
+              }}
             >
               <span>{icon}</span>
               {label}
+              {label === text.notifications && unreadNotifications > 0 && (
+                <b className="notification-badge">{unreadNotifications > 9 ? '9+' : unreadNotifications}</b>
+              )}
             </div>
           ))}
         </nav>
@@ -300,6 +652,8 @@ function HomePage({ user, onLogout, onUserUpdate, onPasswordChange, onDelete }) 
           user={user}
           onEdit={() => setSettingsOpen(true)}
           onBack={() => setProfilePage(false)}
+          onToggleFollow={toggleFollow}
+          onLogout={onLogout}
         />
         : <section className="home-feed">
         <header className="feed-header">
@@ -337,7 +691,7 @@ function HomePage({ user, onLogout, onUserUpdate, onPasswordChange, onDelete }) 
         </section>}
 
       <aside className="home-discover">
-        <div className="search-box">Search posts <span>⌕</span></div>
+        <PeopleSearch onToggleFollow={toggleFollow} onLogout={onLogout} />
         <div className="suggestion-heading"><strong>SUGGESTIONS</strong><span>♢  ⟳  &lt;  &gt;</span></div>
         <div className="discover-card discovery-banner"><strong>DISCOVERY</strong><span>▶</span></div>
         <div className="discover-card creator-card creator-card--one"><strong>Yoga with Eva</strong><span>@evamartinezyoga</span></div>
@@ -367,6 +721,15 @@ function HomePage({ user, onLogout, onUserUpdate, onPasswordChange, onDelete }) 
           localStorage.setItem('language', next)
         }}
         onLogout={onLogout}
+      />}
+      {notificationOpen && <NotificationPanel
+        notifications={notifications}
+        unreadCount={unreadNotifications}
+        isLoading={notificationLoading}
+        error={notificationError}
+        onMarkRead={markNotificationRead}
+        onMarkAllRead={markAllNotificationsRead}
+        onClose={() => setNotificationOpen(false)}
       />}
     </div>
   )
@@ -413,7 +776,7 @@ function App() {
     (!isRegistering || (username && confirmPassword && password === confirmPassword)),
   )
 
-  function logout() {
+  const logout = useCallback(() => {
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('terms_accepted')
@@ -422,7 +785,7 @@ function App() {
     setIsLoggedIn(false)
     setShowHome(false)
     setShowTerms(false)
-  }
+  }, [])
 
   async function updateUser(profileForm, avatar) {
     const formData = new FormData()
@@ -441,6 +804,18 @@ function App() {
     localStorage.setItem('user', JSON.stringify(updatedUser))
     setUser(updatedUser)
   }
+
+  const refreshUser = useCallback(async () => {
+    const response = await authenticatedFetch('/auth/me/', {}, logout)
+    const data = await response.json()
+    if (!response.ok) {
+      throw new Error(data.detail || 'Unable to refresh your profile.')
+    }
+    const refreshedUser = formatUser(data)
+    localStorage.setItem('user', JSON.stringify(refreshedUser))
+    setUser(refreshedUser)
+    return refreshedUser
+  }, [logout])
 
   async function changePassword(passwords) {
     const response = await authenticatedFetch('/auth/password/', {
@@ -518,12 +893,12 @@ function App() {
     }
   }
 
-  if (showHome) return <HomePage user={user || currentUser} onLogout={logout} onUserUpdate={updateUser} onPasswordChange={changePassword} onDelete={deleteAccount} />
+  if (showHome) return <HomePage user={user || currentUser} onLogout={logout} onUserUpdate={updateUser} onRefreshUser={refreshUser} onPasswordChange={changePassword} onDelete={deleteAccount} />
 
   if (showTerms) {
     return (
       <>
-        <HomePage user={user || currentUser} onLogout={logout} onUserUpdate={updateUser} onPasswordChange={changePassword} onDelete={deleteAccount} />
+        <HomePage user={user || currentUser} onLogout={logout} onUserUpdate={updateUser} onRefreshUser={refreshUser} onPasswordChange={changePassword} onDelete={deleteAccount} />
         <TermsModal onAccept={() => {
           localStorage.setItem('terms_accepted', 'true')
           setShowTerms(false)

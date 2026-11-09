@@ -10,6 +10,7 @@ class Profile(models.Model):
     display_name = models.CharField(max_length=100, blank=True)
     bio = models.TextField(blank=True, validators=[MaxLengthValidator(500)])
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
+    is_private = models.BooleanField(default=False)
     followers_count = models.PositiveIntegerField(default=0)
     following_count = models.PositiveIntegerField(default=0)
 

@@ -91,6 +91,7 @@ class AccountRegistrationSerializer(CredentialsSerializer):
 
 
 class ProfileSerializer(serializers.ModelSerializer):
+    id = serializers.IntegerField(source='user_id', read_only=True)
     username = serializers.CharField(source='user.username', max_length=150)
     email = serializers.EmailField(source='user.email', read_only=True)
     avatar_url = serializers.SerializerMethodField()
@@ -98,9 +99,9 @@ class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
         fields = (
-            'username', 'email', 'display_name', 'bio', 'avatar_url',
+            'id', 'username', 'email', 'display_name', 'bio', 'avatar_url',
             'created_at', 'updated_at',
-            'followers_count', 'following_count',
+            'followers_count', 'following_count', 'is_private',
         )
         read_only_fields = (
             'email', 'created_at', 'updated_at',

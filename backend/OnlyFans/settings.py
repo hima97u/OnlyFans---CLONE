@@ -41,6 +41,8 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'accounts',
+    'follows',
+    'notifications',
 ]
 
 MIDDLEWARE = [
