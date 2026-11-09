@@ -67,7 +67,7 @@ function ProfileDrawer({ user, darkMode, language, onProfile, onDarkMode, onLang
   const text = translations[language]
   return (
     <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="profile-drawer" onClick={(event) => event.stopPropagation()}>
+      <aside className={darkMode ? 'profile-drawer profile-drawer--dark' : 'profile-drawer'} onClick={(event) => event.stopPropagation()}>
         <button className="drawer-close" type="button" onClick={onClose}>×</button>
         <div className="drawer-profile">
           <div className="profile-badge profile-badge--large">{user.initials}</div>
@@ -87,7 +87,14 @@ function ProfileDrawer({ user, darkMode, language, onProfile, onDarkMode, onLang
         </div>
         <div className="drawer-section">
           <button type="button">? <span>Help and support</span></button>
-          <button type="button" onClick={onDarkMode}>☾ <span>{text.dark}</span><b>{darkMode ? 'On' : 'Off'}</b></button>
+          <div className="drawer-setting-row">
+            <span className="drawer-setting-icon" aria-hidden="true">☾</span>
+            <span>{text.dark}</span>
+            <label className="theme-switch" aria-label={`${text.dark}: ${darkMode ? 'On' : 'Off'}`}>
+              <input type="checkbox" checked={darkMode} onChange={onDarkMode} />
+              <span className="theme-switch-track" />
+            </label>
+          </div>
           <button type="button" onClick={onLanguage}>◎ <span>{text.language}</span><b>⌄</b></button>
         </div>
         <div className="drawer-section drawer-logout">
@@ -98,7 +105,7 @@ function ProfileDrawer({ user, darkMode, language, onProfile, onDarkMode, onLang
   )
 }
 
-function SettingsPage({ user, onBack, onSave, onPasswordChange, onDelete }) {
+function SettingsPage({ user, darkMode, onBack, onSave, onPasswordChange, onDelete }) {
   const [section, setSection] = useState('profile')
   const [form, setForm] = useState({
     username: user.username,
@@ -127,7 +134,7 @@ function SettingsPage({ user, onBack, onSave, onPasswordChange, onDelete }) {
   }
 
   return (
-    <section className="settings-page">
+    <section className={darkMode ? 'settings-page settings-page--dark' : 'settings-page'}>
       <aside className="settings-sidebar">
         <button className="settings-back" type="button" onClick={onBack}>← SETTINGS</button>
         <strong>{user.tag}</strong>
@@ -144,7 +151,7 @@ function SettingsPage({ user, onBack, onSave, onPasswordChange, onDelete }) {
             <div className="settings-cover"><div className="profile-cover-shape" /></div>
             <div className="settings-avatar">
               {user.avatar_url ? <img src={user.avatar_url} alt="" /> : <span>{user.initials}</span>}
-              <label htmlFor="settings-avatar">📷</label>
+              <label className="avatar-edit-button" htmlFor="settings-avatar" aria-label="Change profile photo">✦</label>
               <input id="settings-avatar" type="file" accept="image/*" onChange={(event) => setAvatar(event.target.files[0])} />
             </div>
             <label htmlFor="settings-username">Username</label>
@@ -220,8 +227,8 @@ function ProfilePage({ user, onEdit, onBack }) {
           <i />
         </div>
         <div className="profile-actions">
-          <button type="button" onClick={onEdit}>⚙ EDIT PROFILE</button>
-          <button type="button" aria-label="Share profile">⇧</button>
+          <button className="edit-profile-button" type="button" onClick={onEdit}><span aria-hidden="true">✦</span> EDIT PROFILE</button>
+          <button className="icon-button" type="button" aria-label="Share profile">↗</button>
         </div>
         <h1>{user.display_name || user.username}</h1>
         <p>{user.tag} <span>·</span> <b>Available⌄</b></p>
@@ -261,6 +268,7 @@ function HomePage({ user, onLogout, onUserUpdate, onPasswordChange, onDelete }) 
   if (settingsOpen) {
     return <SettingsPage
       user={user}
+      darkMode={darkMode}
       onBack={() => setSettingsOpen(false)}
       onSave={onUserUpdate}
       onPasswordChange={onPasswordChange}
@@ -319,6 +327,12 @@ function HomePage({ user, onLogout, onUserUpdate, onPasswordChange, onDelete }) 
             <span>▶</span>
             <span className="placeholder-label">Featured post preview</span>
           </div>
+          <div className="post-actions" aria-label="Post actions">
+            <button type="button" aria-label="Like post"><span aria-hidden="true">♡</span><small>Like</small></button>
+            <button type="button" aria-label="Comment on post"><span aria-hidden="true">◌</span><small>Comment</small></button>
+            <button type="button" aria-label="Share post"><span aria-hidden="true">↗</span><small>Share</small></button>
+            <button className="post-bookmark" type="button" aria-label="Save post"><span aria-hidden="true">◇</span></button>
+          </div>
         </article>
         </section>}
 
@@ -372,7 +386,9 @@ function TermsModal({ onAccept }) {
 
 function App() {
   const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [isRegistering, setIsRegistering] = useState(false)
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -391,6 +407,11 @@ function App() {
   const storedUser = storedUserValue ? formatUser(storedUserValue) : null
   const currentUser = storedUser || formatUser({})
   const [user, setUser] = useState(storedUser)
+  const canSubmit = Boolean(
+    email &&
+    password &&
+    (!isRegistering || (username && confirmPassword && password === confirmPassword)),
+  )
 
   function logout() {
     localStorage.removeItem('access_token')
@@ -461,12 +482,21 @@ function App() {
       const response = await fetch(`${API_URL}/auth/${isRegistering ? 'register' : 'login'}/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email,
+          username: isRegistering ? username : undefined,
+          password,
+          confirm_password: isRegistering ? confirmPassword : undefined,
+        }),
       })
       const data = await response.json()
 
       if (!response.ok) {
-        const message = data.email?.[0] || data.password?.[0] || data.non_field_errors?.[0]
+        const message = data.email?.[0]
+          || data.username?.[0]
+          || data.password?.[0]
+          || data.confirm_password?.[0]
+          || data.non_field_errors?.[0]
         throw new Error(message || 'Unable to authenticate. Please try again.')
       }
 
@@ -526,6 +556,19 @@ function App() {
             autoComplete="email"
             required
           />
+          {isRegistering && <input
+            id="username"
+            type="text"
+            placeholder="Username"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="username"
+            minLength="3"
+            maxLength="30"
+            pattern="[A-Za-z0-9_]{3,30}"
+            title="Use 3-30 letters, numbers, or underscores."
+            required
+          />}
           <input
             id="password"
             type="password"
@@ -535,7 +578,17 @@ function App() {
             autoComplete={isRegistering ? 'new-password' : 'current-password'}
             required
           />
-          <button type="submit" disabled={isLoading || !email || !password}>
+          {isRegistering && <input
+            id="confirm-password"
+            type="password"
+            placeholder="Confirm password"
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+            autoComplete="new-password"
+            minLength="8"
+            required
+          />}
+          <button type="submit" disabled={isLoading || !canSubmit}>
             {isLoading ? 'PLEASE WAIT...' : isRegistering ? 'CREATE ACCOUNT' : isLoggedIn ? 'LOGGED IN' : 'LOG IN'}
           </button>
           {error && <p className="form-error" role="alert">{error}</p>}
@@ -552,6 +605,7 @@ function App() {
             onClick={() => {
               setIsRegistering((current) => !current)
               setError('')
+              setConfirmPassword('')
             }}
           >
             {isRegistering ? 'Already have an account? Log in' : 'Create an account'}
