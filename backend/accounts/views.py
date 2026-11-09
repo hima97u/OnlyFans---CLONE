@@ -1,6 +1,8 @@
+from django.db import IntegrityError, transaction
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -35,6 +37,8 @@ def token_response(user):
 class EmailLoginView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
 
     def post(self, request):
         serializer = EmailLoginSerializer(data=request.data)
@@ -45,11 +49,21 @@ class EmailLoginView(APIView):
 class AccountRegistrationView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'register'
 
     def post(self, request):
         serializer = AccountRegistrationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        return Response(token_response(serializer.save()), status=status.HTTP_201_CREATED)
+        try:
+            with transaction.atomic():
+                user = serializer.save()
+        except IntegrityError:
+            return Response(
+                {'email': ['An account with this email already exists.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(token_response(user), status=status.HTTP_201_CREATED)
 
 
 class CurrentUserView(APIView):

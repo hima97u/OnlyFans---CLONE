@@ -5,6 +5,8 @@ from django.db import models
 
 class Profile(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     display_name = models.CharField(max_length=100, blank=True)
     bio = models.TextField(blank=True, validators=[MaxLengthValidator(500)])
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
