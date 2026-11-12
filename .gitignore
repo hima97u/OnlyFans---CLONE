@@ -7,6 +7,12 @@ __pycache__/
 # Django
 db.sqlite3
 media/
+!backend/media/
+backend/media/*
+!backend/media/.gitkeep
+!backend/media/posts/
+backend/media/posts/*
+!backend/media/posts/.gitkeep
 staticfiles/
 
 # React
@@ -15,3 +21,7 @@ dist/
 
 # IDE
 .vscode/
+
+
+# Miscellaneous
+plan.txt

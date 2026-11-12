@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
+import { Feed } from './Feed'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api'
 
@@ -341,6 +342,8 @@ function ProfilePage({ user, onEdit, onBack, onToggleFollow, onLogout }) {
   const [isLoadingConnections, setIsLoadingConnections] = useState(true)
   const [connectionError, setConnectionError] = useState('')
   const [busyUserId, setBusyUserId] = useState(null)
+  const [profileTab, setProfileTab] = useState('posts')
+  const profileFeedParams = useMemo(() => ({ creator_id: user.id }), [user.id])
 
   async function loadConnections() {
     setIsLoadingConnections(true)
@@ -436,12 +439,16 @@ function ProfilePage({ user, onEdit, onBack, onToggleFollow, onLogout }) {
         </div>
       </div>
       <div className="profile-tabs">
-        <button className="profile-tab profile-tab--active" type="button">NO POSTS</button>
-        <button className="profile-tab" type="button">NO MEDIA</button>
+        <button className={profileTab === 'posts' ? 'profile-tab profile-tab--active' : 'profile-tab'} type="button" onClick={() => setProfileTab('posts')}>POSTS</button>
+        <button className={profileTab === 'media' ? 'profile-tab profile-tab--active' : 'profile-tab'} type="button" onClick={() => setProfileTab('media')}>MEDIA</button>
       </div>
       <div className="profile-empty-state">
-        <div className="empty-art">▱ ◇ ▱</div>
-        <strong>No posts yet</strong>
+        <Feed
+          kind={profileTab === 'posts' ? 'creator' : 'media'}
+          params={profileFeedParams}
+          title={profileTab === 'posts' ? 'POSTS' : 'MEDIA'}
+          onSessionExpired={onLogout}
+        />
         <div className="connection-panel">
           <div className="connection-heading">
             <strong>People in your circle</strong>
@@ -471,7 +478,14 @@ function ProfilePage({ user, onEdit, onBack, onToggleFollow, onLogout }) {
 function NotificationPanel({ notifications, unreadCount, isLoading, error, onMarkRead, onMarkAllRead, onClose }) {
   function notificationText(notification) {
     const actor = notification.actor_display_name || notification.actor_username || 'Someone'
-    return `${actor} started following you`
+    const messages = {
+      follow: 'started following you',
+      like: 'liked your post',
+      comment: 'commented on your post',
+      reply: 'replied to your comment',
+      comment_like: 'liked your comment',
+    }
+    return `${actor} ${messages[notification.notification_type] || 'interacted with you'}`
   }
 
   return (
@@ -521,6 +535,84 @@ function NotificationPanel({ notifications, unreadCount, isLoading, error, onMar
   )
 }
 
+function PostComposer({ onPosted, onLogout }) {
+  const [open, setOpen] = useState(false)
+  const [body, setBody] = useState('')
+  const [visibility, setVisibility] = useState('free')
+  const [category, setCategory] = useState('')
+  const [hashtags, setHashtags] = useState('')
+  const [media, setMedia] = useState(null)
+  const [error, setError] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+
+  async function submit(event) {
+    event.preventDefault()
+    setIsSaving(true)
+    setError('')
+    const formData = new FormData()
+    formData.append('body', body)
+    formData.append('visibility', visibility)
+    formData.append('category', category)
+    formData.append('hashtags', hashtags)
+    if (media) formData.append('media', media)
+    try {
+      const response = await authenticatedFetch('/posts/create/', {
+        method: 'POST',
+        body: formData,
+      }, onLogout)
+      const contentType = response.headers.get('content-type') || ''
+      const raw = await response.text()
+      let data = {}
+      if (contentType.includes('application/json') && raw) {
+        try {
+          data = JSON.parse(raw)
+        } catch {
+          throw new Error(`Django returned invalid JSON (HTTP ${response.status}).`)
+        }
+      }
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Django returned HTML instead of JSON (HTTP ${response.status}). Check that Django is running on ${API_URL}.`)
+      }
+      if (!response.ok) throw new Error(data.detail || data.non_field_errors?.[0] || 'Unable to publish post.')
+      setBody('')
+      setCategory('')
+      setHashtags('')
+      setMedia(null)
+      setOpen(false)
+      onPosted()
+    } catch (submitError) {
+      setError(submitError.message)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  if (!open) {
+    return <button className="compose-box compose-box--button" type="button" onClick={() => setOpen(true)}>Compose new post...</button>
+  }
+  return (
+    <form className="post-composer" onSubmit={submit}>
+      <textarea value={body} onChange={(event) => setBody(event.target.value)} maxLength={5000} placeholder="Write something..." autoFocus />
+      <div className="composer-fields">
+        <select value={visibility} onChange={(event) => setVisibility(event.target.value)} aria-label="Post visibility">
+          <option value="free">Free</option>
+          <option value="followers">Followers only</option>
+          <option value="subscriber">Subscribers only</option>
+        </select>
+        <input value={category} onChange={(event) => setCategory(event.target.value)} maxLength={100} placeholder="Category" />
+        <input value={hashtags} onChange={(event) => setHashtags(event.target.value)} maxLength={500} placeholder="#hashtags" />
+      </div>
+      <label className="media-picker">Add image or video<input type="file" accept="image/*,video/*" onChange={(event) => setMedia(event.target.files[0] || null)} /></label>
+      {media && <small>{media.name}</small>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="composer-actions">
+        <button type="button" onClick={() => setOpen(false)}>Cancel</button>
+        <button type="submit" disabled={isSaving}>{isSaving ? 'POSTING...' : 'POST'}</button>
+      </div>
+    </form>
+  )
+}
+
 function HomePage({ user, onLogout, onUserUpdate, onRefreshUser, onPasswordChange, onDelete }) {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -532,6 +624,7 @@ function HomePage({ user, onLogout, onUserUpdate, onRefreshUser, onPasswordChang
   const [notificationError, setNotificationError] = useState('')
   const [darkMode, setDarkMode] = useState(localStorage.getItem('dark_mode') === 'true')
   const [language, setLanguage] = useState(localStorage.getItem('language') || 'English')
+  const [feedVersion, setFeedVersion] = useState(0)
   const text = translations[language]
 
   useEffect(() => {
@@ -672,38 +765,9 @@ function HomePage({ user, onLogout, onUserUpdate, onRefreshUser, onPasswordChang
           onLogout={onLogout}
         />
         : <section className="home-feed">
-        <header className="feed-header">
-          <strong>HOME</strong>
-          <span>⋮</span>
-        </header>
-        <div className="compose-box">
-          <span>Compose new post...</span>
-          <div className="compose-tools"><span>▧</span><span>⚑</span><span>♧</span><span>Aa</span></div>
-        </div>
+        <PostComposer onPosted={() => setFeedVersion((version) => version + 1)} onLogout={onLogout} />
         <div className="feed-filter"><span>All</span><b>✎</b></div>
-        <article className="home-post">
-          <header>
-            <BrandMark small />
-            <div><strong>OnlyFans ✓</strong><span>@onlyfans</span></div>
-            <time>4 hours ago ...</time>
-          </header>
-          <p>
-            From stone walls to sea views, <a href="#petitemmatv">@petitemmatv</a> explores
-            Costa Brava, uncovering why this Spanish gem has captured so much attention.
-            🌅 🇪🇸<br />
-            <a href="#links">onlyfans.com/petitemmatv</a> / <a href="#links">onlyfans.com/oftv</a>
-          </p>
-          <div className="post-placeholder">
-            <span>▶</span>
-            <span className="placeholder-label">Featured post preview</span>
-          </div>
-          <div className="post-actions" aria-label="Post actions">
-            <button type="button" aria-label="Like post"><span aria-hidden="true">♡</span><small>Like</small></button>
-            <button type="button" aria-label="Comment on post"><span aria-hidden="true">◌</span><small>Comment</small></button>
-            <button type="button" aria-label="Share post"><span aria-hidden="true">↗</span><small>Share</small></button>
-            <button className="post-bookmark" type="button" aria-label="Save post"><span aria-hidden="true">◇</span></button>
-          </div>
-        </article>
+        <Feed kind="following" title="HOME" onSessionExpired={onLogout} refreshKey={feedVersion} />
         </section>}
 
       <aside className="home-discover">

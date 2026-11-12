@@ -4,7 +4,17 @@ from django.db import models
 
 class Notification(models.Model):
     FOLLOW = 'follow'
-    TYPE_CHOICES = ((FOLLOW, 'Follow'),)
+    LIKE = 'like'
+    COMMENT = 'comment'
+    REPLY = 'reply'
+    COMMENT_LIKE = 'comment_like'
+    TYPE_CHOICES = (
+        (FOLLOW, 'Follow'),
+        (LIKE, 'Like'),
+        (COMMENT, 'Comment'),
+        (REPLY, 'Reply'),
+        (COMMENT_LIKE, 'Comment like'),
+    )
 
     recipient = models.ForeignKey(
         settings.AUTH_USER_MODEL,

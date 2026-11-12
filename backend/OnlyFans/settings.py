@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'accounts',
     'follows',
     'notifications',
+    'posts',
 ]
 
 MIDDLEWARE = [
